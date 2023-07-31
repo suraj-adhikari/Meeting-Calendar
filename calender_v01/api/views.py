@@ -128,7 +128,9 @@ def HomePage(request):
 def user(request):
     # current user
         current_user_email=request.user.email
+        print(current_user_email)
         api_key=userData.objects.get(emailId=current_user_email).apiKey
+        print("Hello world 2")
         print(api_key)
         url="https://api.hubapi.com/settings/v3/users/"
         headers = {

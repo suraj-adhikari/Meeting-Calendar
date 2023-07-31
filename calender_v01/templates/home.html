@@ -26,6 +26,7 @@
         <input
           class="form-check-input"
           type="radio"
+          value="{{data.count}}"
           name="{{data.name}}"
           id="{{data.formId}}"
         />
@@ -70,9 +71,11 @@
           const formAction = form.getAttribute("action");
           const selectedName = selectedRadioButton.name;
           const selectedId = selectedRadioButton.id;
+          const selectedCount = selectedRadioButton.value;
+          const selectedcount = selectedRadioButton.count;
           const targetUrl = `${formAction}?name=${encodeURIComponent(
             selectedName
-          )}&id=${encodeURIComponent(selectedId)}`;
+          )+encodeURIComponent(selectedcount)}&id=${encodeURIComponent(selectedId)}&count=${encodeURIComponent(selectedCount)}`;
 
           // Navigate to the target page with the query parameters
           window.location.href = targetUrl;
