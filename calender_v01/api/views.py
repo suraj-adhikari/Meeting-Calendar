@@ -65,7 +65,7 @@ def LogoutPage(request):
     return redirect('login')
 
 
-# @login_required(login_url='login')
+@login_required(login_url='login')
 def HomePage(request):
     try:
         # current user    
@@ -105,10 +105,9 @@ def HomePage(request):
 
 
 
-# @login_required(login_url='login')
+@login_required(login_url='login')
 def user(request):
     # current user
-        print(request.user)
         current_user_email=request.user.email
         api_key=userData.objects.get(emailId=current_user_email).apiKey
         print(api_key)
