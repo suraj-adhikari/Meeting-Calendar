@@ -69,39 +69,58 @@ def LogoutPage(request):
 def HomePage(request):
     try:
         # current user    
-        current_user_email=request.user.email
-        api_key=userData.objects.get(emailId=current_user_email).apiKey
-        print(api_key)
-        url="https://api.hubapi.com/marketing/v3/forms/"
+        current_user_email = request.user.email
+        api_key = userData.objects.get(emailId=current_user_email).apiKey
+        url = "https://api.hubapi.com/marketing/v3/forms/"
         headers = {
-        'Authorization': f'Bearer {api_key}',
-        'Content-Type': 'application/json',
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json',
         }
         response = requests.get(url, headers=headers)
         data = response.json().get('results', [])
+        
+        # to find how many fields in a particular form 
+        # Create a dictionary to store the count of each objectTypeId for each id
+        id_object_type_count = {}
+        
+        # storing data in the database for extraction
         for obj in data:
-            id=obj['id']
-            name=obj['name']
-            createdAt=obj['createdAt']
-            updatedAt=obj['updatedAt']
-            apiKey=api_key
+            id = obj['id']
+            name = obj['name']
+            createdAt = obj['createdAt']
+            updatedAt = obj['updatedAt']
+            apiKey = api_key
+            
+            for group in obj['fieldGroups']:
+                for field in group['fields']:
+                    object_type_id = field['objectTypeId']
+                    # Create a unique key combining the form_id and object_type_id
+                    key = (id, object_type_id)
+                    # Increment the count for the corresponding key
+                    id_object_type_count[key] = id_object_type_count.get(key, 0) + 1
+
             existing_data = formData.objects.filter(formId=id)
             if existing_data.exists():
-                print("form already added to  form data db")
+                print("Form already added to form data db")
             else:
-                wareHouse=formData(
-                formId=id,
-                apiKey=apiKey,
-                name=name,
-                createdAt=createdAt,
-                updatedAt=updatedAt)
+                count = sum(id_object_type_count[k] for k in id_object_type_count if k[0] == id)
+                wareHouse = formData(
+                    formId=id,
+                    count=count,
+                    apiKey=apiKey,
+                    name=name,
+                    createdAt=createdAt,
+                    updatedAt=updatedAt
+                )
                 wareHouse.save()
-    except :
-        print("Error")
-    total=formData.objects.all()
-    if request.method=="POST":
+        
+    except Exception as e:
+        print("Error:", e)
+
+    total = formData.objects.all()
+    if request.method == "POST":
         return redirect('user')
-    return render (request,'home.html',{'total':total})
+    return render(request, 'home.html', {'total': total})
 
 
 

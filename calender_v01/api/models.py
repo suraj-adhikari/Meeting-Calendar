@@ -17,3 +17,8 @@ class formData(models.Model):
     name=models.CharField(max_length=250)
     createdAt=models.DateTimeField()
     updatedAt=models.DateTimeField()
+    count=models.IntegerField(null=True)
+
+    
+    def __str__(self) -> str:
+        return (self.name)

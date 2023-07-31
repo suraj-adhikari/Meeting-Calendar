@@ -18,6 +18,7 @@
   </head>
   <body>
     <h1>Home Page</h1>
+    <div id="error-message" style="color: red;"></div>
     <form id="myForm" action="{% url 'user' %}" method="post">
     <!-- <form id="myForm" action="" method="post"> -->
       {% csrf_token %} {% for data in total %}
@@ -76,7 +77,11 @@
           // Navigate to the target page with the query parameters
           window.location.href = targetUrl;
         } else {
-          console.log("Please select a radio button.");
+          // No radio button is selected, show the error message
+          const errorMessage = document.getElementById('error-message');
+          errorMessage.textContent = 'Please select a radio button.';
+          // window.location.href="{% url 'home' %}"
+          // console.log("Please select a radio button.");
         }
       });
     </script>
