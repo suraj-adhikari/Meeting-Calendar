@@ -1,6 +1,8 @@
 
 from django.shortcuts import render
 import requests
+import threading
+import json
 from django.http import JsonResponse,HttpResponseRedirect
 from django.http import HttpResponse
 import time
@@ -11,14 +13,81 @@ from django.contrib.auth.models import User
 from django.contrib.auth import authenticate,login,logout
 from django.contrib.auth.decorators import login_required
 from .models import userData,formData
+from django.views.decorators.csrf import csrf_protect
 
+
+# Our Hubspot url link to login through Hubspot
+def hubspot_auth(request):
+    # Construct the HubSpot OAuth2 authorization URL
+    auth_url = f"https://app.hubspot.com/oauth/authorize?client_id={settings.HUBSPOT_CLIENT_ID}&scope=forms%20crm.objects.companies.write%20crm.objects.companies.read&redirect_uri={settings.HUBSPOT_REDIRECT_URI}"
+    return HttpResponseRedirect(auth_url)
+
+# Refresh token function to update access token after 30 min
+def create_refresh_token():
+    with open('access_token.json', 'r') as file:
+        data = json.load(file)
+    # Check if the required keys are present
+    refresh_token = data.get('refresh_token', '')
+    # Create the POST request data
+    payload = {
+        'grant_type': 'refresh_token',
+        'client_id': settings.HUBSPOT_CLIENT_ID,
+        'client_secret': settings.HUBSPOT_CLIENT_SECRET,
+        'redirect_uri': settings.HUBSPOT_REDIRECT_URI,
+        'refresh_token': refresh_token
+    }
+    # Send the POST request
+    token_url = 'https://api.hubapi.com/oauth/v1/token'
+    response = requests.post(token_url, data=payload)
+    # Check if the request was successful
+    if response.status_code == 200:
+        response_data = response.json()
+        access_token = response.json().get('access_token')
+        if 'access_token' in response_data:
+            # Save the response data to the JSON file
+            with open('access_token.json', 'w') as file:
+                json.dump(response_data, file)
+        
+    return HttpResponse(access_token)
+
+# Handle the OAuth2 callback and exchange the code for an access token
+def hubspot_callback(request):
+    code = request.GET.get('code')
+    if code:
+        token_url = 'https://api.hubapi.com/oauth/v1/token'
+        data = {
+            'grant_type': 'authorization_code',
+            'client_id': settings.HUBSPOT_CLIENT_ID,
+            'client_secret': settings.HUBSPOT_CLIENT_SECRET,
+            'redirect_uri': settings.HUBSPOT_REDIRECT_URI,
+            'code': code,
+        }
+        response = requests.post(token_url, data=data)
+        if response.status_code == 200:
+            access_token = response.json().get('access_token')
+            with open('access_token.json', 'w') as token_file:
+                json.dump(response.json(), token_file)
+            # Schedule the creation of a refresh token after 28 minutes using threading
+            time_to_wait = 1 * 60*28
+            threading.Timer(time_to_wait, create_refresh_token).start()
+            time_to_wait = 2 * 60*28
+            threading.Timer(time_to_wait, create_refresh_token).start()
+            time_to_wait = 3 * 60*28
+            threading.Timer(time_to_wait, create_refresh_token).start()
+            return HttpResponse(access_token)
+    else:
+        raise Exception("Hubspot is not sending code ")  
+    return HttpResponse(access_token)
+
+
+
+@csrf_protect
 def SignupPage(request):
     if request.method=='POST':
         uname=request.POST.get('username')
         email=request.POST.get('email')
         pass1=request.POST.get('password1')
         pass2=request.POST.get('password2')
-        apiKey=request.POST.get('apiKey')
 
         if pass1!=pass2:
             return HttpResponse("Your password and confrom password are not Same!!")
@@ -26,7 +95,7 @@ def SignupPage(request):
 
             current_user=User.objects.create_user(uname,email,pass1)
             current_user.save()
-            existing_data = userData.objects.filter(userName=uname, emailId=email,apiKey=apiKey)
+            existing_data = userData.objects.filter(userName=uname, emailId=email)
             if existing_data.exists():
                 print("You already have an account")
             else:
@@ -35,15 +104,11 @@ def SignupPage(request):
                 emailId=email,
                 password1=pass1,
                 password2=pass2,
-                apiKey=apiKey
             )
                 wareHouse.save()
-                return redirect('home')
-        
-
+                # return redirect(f"https://app.hubspot.com/oauth/authorize?client_id={settings.HUBSPOT_CLIENT_ID}&scope=forms%20crm.objects.companies.write%20crm.objects.companies.read&redirect_uri={settings.HUBSPOT_REDIRECT_URI}")
+                return redirect(f"https://app.hubspot.com/oauth/authorize?client_id={settings.HUBSPOT_CLIENT_ID}&scope=forms%20crm.objects.companies.write%20crm.objects.companies.read&redirect_uri={settings.HUBSPOT_REDIRECT_URI}")
     return render (request,'signup.html')
-
-
 
 def LoginPage(request):
     if request.method=='POST':
@@ -52,147 +117,11 @@ def LoginPage(request):
         user=authenticate(request,username=current_username,password=current_pass1)
         if user is not None:
             login(request,user)
-            return redirect('home')
+            return redirect(f"https://app.hubspot.com/oauth/authorize?client_id={settings.HUBSPOT_CLIENT_ID}&scope=forms%20crm.objects.companies.write%20crm.objects.companies.read&redirect_uri={settings.HUBSPOT_REDIRECT_URI}")
         else:
             return HttpResponse ("Username or Password is incorrect!!!")
-
     return render (request,'login.html')
-
-
 
 def LogoutPage(request):
     logout(request)
     return redirect('login')
-
-
-@login_required(login_url='login')
-def HomePage(request):
-    try:
-        # current user    
-        current_user_email = request.user.email
-        api_key = userData.objects.get(emailId=current_user_email).apiKey
-        url = "https://api.hubapi.com/marketing/v3/forms/"
-        headers = {
-            'Authorization': f'Bearer {api_key}',
-            'Content-Type': 'application/json',
-        }
-        response = requests.get(url, headers=headers)
-        data = response.json().get('results', [])
-        
-        # to find how many fields in a particular form 
-        # Create a dictionary to store the count of each objectTypeId for each id
-        id_object_type_count = {}
-        
-        # storing data in the database for extraction
-        for obj in data:
-            id = obj['id']
-            name = obj['name']
-            createdAt = obj['createdAt']
-            updatedAt = obj['updatedAt']
-            apiKey = api_key
-            
-            for group in obj['fieldGroups']:
-                for field in group['fields']:
-                    object_type_id = field['objectTypeId']
-                    # Create a unique key combining the form_id and object_type_id
-                    key = (id, object_type_id)
-                    # Increment the count for the corresponding key
-                    id_object_type_count[key] = id_object_type_count.get(key, 0) + 1
-
-            existing_data = formData.objects.filter(formId=id)
-            if existing_data.exists():
-                print("Form already added to form data db")
-            else:
-                count = sum(id_object_type_count[k] for k in id_object_type_count if k[0] == id)
-                wareHouse = formData(
-                    formId=id,
-                    count=count,
-                    apiKey=apiKey,
-                    name=name,
-                    createdAt=createdAt,
-                    updatedAt=updatedAt
-                )
-                wareHouse.save()
-        
-    except Exception as e:
-        print("Error:", e)
-
-    total = formData.objects.all()
-    if request.method == "POST":
-        return redirect('user')
-    return render(request, 'home.html', {'total': total})
-
-
-
-@login_required(login_url='login')
-def user(request):
-    # current user
-        current_user_email=request.user.email
-        print(current_user_email)
-        api_key=userData.objects.get(emailId=current_user_email).apiKey
-        print("Hello world 2")
-        print(api_key)
-        url="https://api.hubapi.com/settings/v3/users/"
-        headers = {
-        'Authorization': f'Bearer {api_key}',
-        'Content-Type': 'application/json',
-        }
-        response = requests.get(url, headers=headers)
-        data = response.json().get('results', [])
-        return render(request,'user.html',{'data':data})
-
-
-# @login_required(login_url='login')
-def calender(request):
-    # we are using sleep or delay of 2 sec here  because form submission of data and fetch of data at same time cause error , so we check network it takes exact 1750ms to  do ,  so we make our fetch request 2 sec delay.
-    # we can try reload functionality but it shows weird behaviour
-    time.sleep(2)
-    # API key
-    api_key = 'pat-na1-8a689cf9-0e4f-4857-b529-e6ca79a230bd'
-    
-    # Make the API request
-    url = 'https://api.hubapi.com/form-integrations/v1/submissions/forms/b0b4c739-3645-4a37-9c04-7f811d11ea4c'
-    headers = {
-        'Authorization': f'Bearer {api_key}',
-        'Content-Type': 'application/json',
-    }
-    response = requests.get(url, headers=headers)
-    
-    if response.status_code == 200:
-        data = response.json().get('results', [])
-        # print(data) and optimize loop, you can check it using transeversing data
-        user_data = [user['value'] for d in data for user in d.get('values', [])]
-        # print(user_data)
-        
-        # Only take the first 5 elements of user_data
-        user_data = user_data[:5]
-        # print(user_data)
-        
-        country, requirement = user_data[3], user_data[4]
-
-        print(country,requirement)
-        vartika=['United States','Australia','Austria','Bolovia','Brazil','Canada','Chile','China','France','Germany','Hong Kong','Ireland','Iceland','Italy','United Kingdon']
-        naman=['Zimbabwe','Zambia','Yemen','Vietnam','United Arab Emirates','Thailand','Sweden','Switzerland','Spain']
-        hitesh=['Afghanistan','India','Pakistan','Bangladesh','Nepal','Bhutan','Sri Lanka','New Zealand','Myanmar','Malaysia','Maldives']
-        aditya=['Poland','Portugal','Norway','Peru']
-
-        print(country in vartika,country in naman,country in hitesh,country in aditya)
-        if country in vartika and requirement == 'Others':
-            print(f'Meeting assign to vartika from {country} and {requirement}')
-            return HttpResponseRedirect('https://meetings.hubspot.com/vartika-khatri')
-        elif  country in naman and requirement == 'Salesforce':
-            print(f'Meeting assign to naman from {country} and {requirement}')
-            return HttpResponseRedirect("https://meetings.hubspot.com/naman12")
-        elif  country in hitesh and requirement == 'Hubspot':
-            print(f'Meeting assign to hitesh from {country} and {requirement}')
-            return HttpResponseRedirect("https://meetings.hubspot.com/hitesh19")
-        elif country in aditya and requirement=='CMS':
-            print(f'Meeting assign to aditya from {country} and {requirement}')
-            return HttpResponseRedirect('https://meetings.hubspot.com/aditya-k1')
-        else:
-            print(f'Meeting assign to nanda from {country} and {requirement}')
-            return HttpResponseRedirect('https://meetings.hubspot.com/nanda6')
-            
-        # return JsonResponse(user_data, safe=False)
-    else:
-        return JsonResponse({'message': 'Error occurred while fetching data'}, status=response.status_code)
